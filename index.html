@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>歌詞プロンプター</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="歌詞プロンプター">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #111317; --panel: #1b1e24; --panel2: #262a32; --line: #343945;
+    --text: #eef0f4; --dim: #a0a6b3; --accent: #f2b544; --danger: #e5645a;
+    --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 16px; overscroll-behavior: none; touch-action: manipulation; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel2); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #1a1405; font-weight: 700; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .45; cursor: default; }
+  [hidden] { display: none !important; }
+
+  /* 編集画面 */
+  #editor { height: 100%; display: grid; grid-template-rows: auto 1fr;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  header { display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0 auto 0 0; font-size: 18px; }
+  main { min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr) 270px; }
+  .col { min-height: 0; display: flex; flex-direction: column; padding: 12px; gap: 10px; }
+  .col + .col { border-left: 1px solid var(--line); }
+  .col-title { margin: 0; font-size: 13px; color: var(--dim); font-weight: 600; }
+
+  #songList { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+  #songList li { display: flex; align-items: center; margin-bottom: 6px; border-radius: 8px;
+    background: var(--panel); border: 1px solid transparent; }
+  #songList li.selected { border-color: var(--accent); }
+  #songList li.dragging { opacity: .7; background: var(--panel2); }
+  .handle { flex: none; width: 40px; height: 48px; display: grid; place-items: center;
+    color: var(--dim); font-size: 20px; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .song-pick { flex: 1; min-width: 0; min-height: 48px; padding: 0 10px 0 0; border: 0; background: none;
+    text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
+  input[type=text], textarea { width: 100%; padding: 10px 12px; font-size: 16px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  #lyricsField { flex: 1; min-height: 0; }
+  #lyrics { flex: 1; min-height: 0; resize: none; line-height: 1.6; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row .push { margin-left: auto; }
+  .hint { margin: 0; font-size: 13px; color: var(--dim); line-height: 1.5; }
+
+  #previews { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .thumb-wrap { font-size: 12px; color: var(--dim); }
+  .thumb-wrap > div:last-child { margin-top: 3px; }
+  .stage { position: relative; overflow: hidden; background: #000; color: #fff; }
+  .thumb-wrap .stage { border: 1px solid var(--line); border-radius: 4px; }
+
+  /* 舞台の中身（大きさは JS で指定） */
+  .lyric-box { position: absolute; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; font-weight: 700; line-height: 1.25; text-align: center; }
+  .lyric-box > div { white-space: nowrap; }
+  .caption { position: absolute; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status { color: #8c93a1; }
+  .next { color: #9fb0a6; text-align: center; }
+  .label { color: var(--accent); font-weight: 600; margin-bottom: .3em; }
+  .photo { position: absolute; object-fit: cover; }
+
+  /* 本番画面 */
+  #play { position: fixed; inset: 0; background: #000; z-index: 10; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none; }
+  #play .stage { position: absolute; inset: 0; }
+  #exit { position: absolute; top: max(4px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+    background: rgba(40,40,40,.55); border: 0; color: #9096a1; font-size: 13px; z-index: 2; }
+  #exit.armed { background: var(--danger); color: #fff; }
+
+  /* 設定 */
+  #settings { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(0,0,0,.6); padding: 16px; }
+  #settings > div { width: min(520px, 100%); max-height: 100%; overflow-y: auto; padding: 18px;
+    background: var(--panel); border-radius: 12px; display: flex; flex-direction: column; gap: 14px; }
+  #settings h2 { margin: 0; font-size: 18px; }
+  #settings h3 { margin: 6px 0 0; font-size: 15px; }
+  input[type=range] { width: 100%; height: 32px; accent-color: var(--accent); }
+  .check { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+  .check input { width: 22px; height: 22px; accent-color: var(--accent); }
+  #corners { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #corners button.on { border-color: var(--accent); color: var(--accent); }
+  #photoThumb { max-width: 110px; max-height: 110px; border-radius: 6px; }
+  #keyTest { padding: 10px; border: 1px dashed var(--line); border-radius: 8px; font-size: 14px; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: 90%;
+    padding: 10px 16px; background: #000; border: 1px solid var(--line); border-radius: 8px; }
+
+  @media (max-width: 900px) {
+    /* 縦向きでは、画面の見え方を歌詞欄の下に横並びで出す */
+    main { grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 270px; }
+    #setlistCol { grid-row: 1 / span 2; }
+    #previewCol { grid-column: 2; border-top: 1px solid var(--line); }
+    #previews { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+    .thumb-wrap { flex: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="editor">
+  <header>
+    <h1>歌詞プロンプター</h1>
+    <button id="openSettings">設定</button>
+    <button id="saveFile">保存</button>
+    <button id="loadFile">読み込み</button>
+    <input id="fileInput" type="file" accept=".json,application/json" hidden>
+    <button id="startAll" class="primary">▶ 1曲目から本番</button>
+  </header>
+  <main>
+    <section class="col" id="setlistCol">
+      <h2 class="col-title">セットリスト（≡を押さえて並べ替え）</h2>
+      <ul id="songList"></ul>
+      <button id="addSong">＋ 曲を追加</button>
+    </section>
+    <section class="col" id="songCol">
+      <label class="field">曲名<input id="title" type="text" autocomplete="off"></label>
+      <label class="field" id="lyricsField">歌詞（空行で次の画面に分かれます）
+        <textarea id="lyrics" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </label>
+      <div class="row">
+        <button id="startHere">▶ この曲から本番</button>
+        <button id="deleteSong" class="danger push">この曲を削除</button>
+      </div>
+    </section>
+    <section class="col" id="previewCol">
+      <h2 class="col-title" id="previewTitle">画面の見え方</h2>
+      <div id="previews"></div>
+    </section>
+  </main>
+</div>
+
+<div id="settings" hidden>
+  <div>
+    <h2>設定</h2>
+    <label class="field"><span>歌詞の最大の大きさ：<b id="maxFontVal"></b></span>
+      <input id="maxFont" type="range" min="8" max="60" step="1"></label>
+    <p class="hint">長い行は、1行に収まるよう自動で小さくなります。遠くて読みにくい会場では大きくしてください。</p>
+    <label class="check"><input id="showNext" type="checkbox">次の行を画面の下に表示する</label>
+
+    <h3>写真</h3>
+    <div class="row" style="align-items:center">
+      <img id="photoThumb" alt="設定中の写真" hidden>
+      <button id="pickPhoto">写真を選ぶ</button>
+      <button id="removePhoto" class="danger" hidden>写真を外す</button>
+      <input id="photoInput" type="file" accept="image/*" hidden>
+    </div>
+    <div id="photoOptions" hidden style="display:flex;flex-direction:column;gap:12px">
+      <label class="check"><input id="showPhoto" type="checkbox">本番画面に写真を表示する</label>
+      <div id="corners">
+        <button data-corner="top-left">左上</button>
+        <button data-corner="top-right">右上</button>
+        <button data-corner="bottom-left">左下</button>
+        <button data-corner="bottom-right">右下</button>
+      </div>
+      <label class="field"><span>写真の大きさ：<b id="photoSizeVal"></b></span>
+        <input id="photoSize" type="range" min="10" max="40" step="1"></label>
+    </div>
+    <p class="hint">写真はこの端末の中だけに保存され、インターネットには送られません。「保存」で作るファイルには写真も入るので、他の方へ渡すときはご注意ください。</p>
+
+    <h3>ペダルの確認</h3>
+    <div id="keyTest">この画面を開いたままペダルを踏むと、届いたキーを表示します。</div>
+
+    <button id="closeSettings" class="primary">閉じる</button>
+  </div>
+</div>
+
+<div id="play" hidden>
+  <div class="stage" id="stage"></div>
+  <button id="exit">終了</button>
+</div>
+
+<div id="toast" hidden role="status"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+/* ---------- 定数 ---------- */
+const FONT = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif';
+const LINE_HEIGHT = 1.25;
+const MIN_READABLE_FONT = 7;  // 画面の短い辺に対する%。これより小さくなる行は編集画面で注意を出す
+const NEXT_KEYS = new Set(['PageDown', 'ArrowDown', 'ArrowRight', ' ', 'Spacebar', 'Enter']);
+const PREV_KEYS = new Set(['PageUp', 'ArrowUp', 'ArrowLeft']);
+const PEDAL_GUARD_MS = 150;   // 接点のバタつきで2回送られるのを防ぐ
+const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const sampleSong = () => ({
+  id: newId(),
+  title: 'サンプル曲（消して使えます）',
+  lyrics: 'ここに歌詞を貼り付けます\nペダルで次の画面へ進みます\n\n空行を入れると\n次の画面に分かれます\n\n長い行は自動で小さくなり、1行に収まるように調整されます',
+});
+const defaultState = () => {
+  const song = sampleSong();
+  return {
+    songs: [song],
+    selectedId: song.id,
+    settings: {
+      maxFont: 26,
+      showNext: true,
+      photo: { data: null, ratio: 1, show: true, corner: 'bottom-right', size: 22 },
+    },
+  };
+};
+
+let state = defaultState();
+const selectedSong = () => state.songs.find(s => s.id === state.selectedId) || null;
+
+/* ---------- 保存（端末の中の IndexedDB） ---------- */
+const DB_NAME = 'kashi-prompter', STORE = 'kv', KEY = 'state';
+let dbPromise;
+function openDb() {
+  return dbPromise || (dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+async function dbGet() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE).objectStore(STORE).get(KEY);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbPut(value) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(value, KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+let saveTimer = null;
+function saveSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 300);
+}
+async function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    await dbPut(state);
+  } catch (err) {
+    console.error(err);
+    toast('保存できませんでした。「保存」ボタンでファイルに控えてください。');
+  }
+}
+
+/* 読み込んだデータを安全な形に整える（壊れた値で本番画面が止まらないように） */
+function clampNum(v, min, max, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+function normalizeState(raw) {
+  const base = defaultState();
+  if (!raw || !Array.isArray(raw.songs)) return null;
+  const songs = raw.songs.filter(s => s && typeof s === 'object').map(s => ({
+    id: typeof s.id === 'string' && s.id ? s.id : newId(),
+    title: typeof s.title === 'string' ? s.title : '',
+    lyrics: typeof s.lyrics === 'string' ? s.lyrics : '',
+  }));
+  const rs = raw.settings || {}, rp = rs.photo || {};
+  const photoOk = typeof rp.data === 'string' && rp.data.startsWith('data:image/');
+  return {
+    songs,
+    selectedId: songs.some(s => s.id === raw.selectedId) ? raw.selectedId : (songs[0] ? songs[0].id : null),
+    settings: {
+      maxFont: clampNum(rs.maxFont, 8, 60, base.settings.maxFont),
+      showNext: rs.showNext !== false,
+      photo: {
+        data: photoOk ? rp.data : null,
+        ratio: clampNum(rp.ratio, 0.2, 5, 1),
+        show: rp.show !== false,
+        corner: CORNERS.includes(rp.corner) ? rp.corner : 'bottom-right',
+        size: clampNum(rp.size, 10, 40, 22),
+      },
+    },
+  };
+}
+
+/* ---------- 歌詞 → 画面 ---------- */
+function splitSlides(lyrics) {
+  return lyrics.replace(/\r\n?/g, '\n').split(/\n[^\S\n]*\n\s*/)
+    .map(block => block.split('\n').map(l => l.trim()).filter(Boolean))
+    .filter(lines => lines.length > 0);
+}
+/* 本番の順番を一列に並べる：曲名 → 歌詞… → 次の曲名 → … → 終わり */
+function buildDeck(songs) {
+  const deck = [];
+  songs.forEach((song, songIndex) => {
+    const slides = splitSlides(song.lyrics);
+    deck.push({ type: 'title', songIndex, song, slideCount: slides.length });
+    slides.forEach((lines, i) => deck.push({ type: 'slide', songIndex, song, lines, slideIndex: i, slideCount: slides.length }));
+  });
+  deck.push({ type: 'end' });
+  return deck;
+}
+function songName(song) { return song.title.trim() || '（曲名なし）'; }
+function nextText(item, total) {
+  if (!item) return '';
+  if (item.type === 'slide') return item.lines[0];
+  if (item.type === 'title') return `次の曲 ${item.songIndex + 1}/${total}：${songName(item.song)}`;
+  return '（ここで終わり）';
+}
+
+/* ---------- 文字の大きさの計算 ---------- */
+const measureCtx = document.createElement('canvas').getContext('2d');
+measureCtx.font = `700 100px ${FONT}`;
+function widthPer1px(line) { return measureCtx.measureText(line).width / 100; }
+function fitFont(lines, boxW, boxH, maxPx) {
+  const widest = Math.max(...lines.map(widthPer1px), 0.01);
+  const size = Math.min(boxW * 0.98 / widest, boxH / (lines.length * LINE_HEIGHT), maxPx);
+  return Math.max(size, 1);
+}
+
+/* 画面の配置。写真の帯を歌詞の領域から外して、歌詞に重ならないようにする */
+function computeLayout(W, H, hasNext) {
+  const { photo, showNext } = state.settings;
+  const pad = Math.round(Math.min(W, H) * 0.03);
+  const hasPhoto = Boolean(photo.data && photo.show);
+  let ph = hasPhoto ? Math.min(W, H) * photo.size / 100 : 0;   // 縦向きで大きくなりすぎないよう短い辺を基準にする
+  let pw = ph * photo.ratio;
+  if (pw > W * 0.4) { pw = W * 0.4; ph = pw / photo.ratio; }
+  const isTop = photo.corner.startsWith('top');
+  const isLeft = photo.corner.endsWith('left');
+  const statusH = Math.round(H * 0.06);
+  const nextH = showNext && hasNext ? Math.round(H * 0.13) : 0;
+  const topBand = Math.max(statusH, hasPhoto && isTop ? ph + pad : 0);
+  const bottomBand = Math.max(nextH, hasPhoto && !isTop ? ph + pad : 0, pad);
+  return { pad, hasPhoto, ph, pw, isTop, isLeft, statusH, nextH, topBand, bottomBand,
+    lyricW: W - pad * 2, lyricH: H - topBand - bottomBand };
+}
+
+/* 本番画面とプレビューで同じ描き方を使う（scale だけが違う） */
+function paintStage(el, item, next, W, H, scale, songTotal) {
+  const L = computeLayout(W, H, Boolean(next));
+  const px = v => (v * scale) + 'px';
+  el.replaceChildren();
+  el.style.width = px(W);
+  el.style.height = px(H);
+
+  const box = document.createElement('div');
+  box.className = 'lyric-box';
+  Object.assign(box.style, { left: px(L.pad), top: px(L.topBand), width: px(L.lyricW), height: px(L.lyricH) });
+  const maxPx = H * state.settings.maxFont / 100;
+
+  if (item.type === 'slide') {
+    const size = fitFont(item.lines, L.lyricW, L.lyricH, maxPx);
+    box.style.fontSize = px(size);
+    item.lines.forEach(line => {
+      const d = document.createElement('div');
+      d.textContent = line;
+      box.append(d);
+    });
+  } else {
+    const main = item.type === 'title' ? songName(item.song) : 'セットリスト終了';
+    const labelText = item.type === 'title' ? `${item.songIndex + 1}曲目 / 全${songTotal}曲` : '';
+    const available = labelText ? L.lyricH * 0.7 : L.lyricH;
+    const size = fitFont([main], L.lyricW, available, Math.min(maxPx, H * 0.2));
+    if (labelText) {
+      const lab = document.createElement('div');
+      lab.className = 'label';
+      lab.style.fontSize = px(Math.min(H * 0.05, size * 0.7));
+      lab.textContent = labelText;
+      box.append(lab);
+    }
+    const d = document.createElement('div');
+    d.style.fontSize = px(size);
+    d.textContent = main;
+    box.append(d);
+  }
+  el.append(box);
+
+  const sideGap = (topSide) => {   // 写真と同じ側では、その分だけ横を空ける
+    const blocked = L.hasPhoto && L.isTop === topSide;
+    return {
+      left: L.pad + (blocked && L.isLeft ? L.pw + L.pad : 0),
+      right: L.pad + (blocked && !L.isLeft ? L.pw + L.pad : 0),
+    };
+  };
+
+  if (item.type === 'slide') {
+    const g = sideGap(true);
+    const st = document.createElement('div');
+    st.className = 'caption status';
+    const size = L.statusH * 0.5;
+    const stopBeforeExit = scale === 1 ? W / 2 + 60 : 0;   // 本番では中央の「終了」ボタンに重ねない
+    Object.assign(st.style, { left: px(g.left), right: px(Math.max(g.right, stopBeforeExit)), top: px((L.statusH - size * 1.2) / 2),
+      fontSize: px(size), lineHeight: 1.2 });
+    st.textContent = `${item.songIndex + 1}/${songTotal} ${songName(item.song)}　${item.slideIndex + 1}/${item.slideCount}`;
+    el.append(st);
+  }
+
+  if (L.nextH) {
+    const g = sideGap(false);
+    const availW = W - g.left - g.right;
+    const text = nextText(next, songTotal);
+    const size = fitFont([text], availW, L.nextH * 0.8, H * 0.07);
+    const n = document.createElement('div');
+    n.className = 'caption next';
+    Object.assign(n.style, { left: px(g.left), right: px(g.right), bottom: px((L.nextH - size * 1.25) / 2),
+      fontSize: px(size), lineHeight: LINE_HEIGHT });
+    n.textContent = text;
+    el.append(n);
+  }
+
+  if (L.hasPhoto) {
+    const img = document.createElement('img');
+    img.className = 'photo';
+    img.alt = '';
+    img.src = state.settings.photo.data;
+    const r = Math.min(L.pw, L.ph) * 0.06;
+    Object.assign(img.style, { width: px(L.pw), height: px(L.ph), borderRadius: px(r) });
+    img.style[L.isTop ? 'top' : 'bottom'] = px(L.pad);
+    img.style[L.isLeft ? 'left' : 'right'] = px(L.pad);
+    el.append(img);
+  }
+}
+
+/* ---------- 編集画面 ---------- */
+function renderSongList() {
+  const list = $('songList');
+  list.replaceChildren();
+  state.songs.forEach((song, i) => {
+    const li = document.createElement('li');
+    li.dataset.id = song.id;
+    if (song.id === state.selectedId) li.classList.add('selected');
+    const handle = document.createElement('div');
+    handle.className = 'handle';
+    handle.textContent = '≡';
+    handle.addEventListener('pointerdown', e => startDrag(e, li));
+    const pick = document.createElement('button');
+    pick.className = 'song-pick';
+    pick.textContent = `${i + 1}. ${songName(song)}`;
+    pick.addEventListener('click', () => { state.selectedId = song.id; saveSoon(); renderEditor(); });
+    li.append(handle, pick);
+    list.append(li);
+  });
+}
+function renderSongForm() {
+  const song = selectedSong();
+  $('songCol').style.visibility = song ? 'visible' : 'hidden';
+  if (!song) return;
+  if ($('title').value !== song.title) $('title').value = song.title;
+  if ($('lyrics').value !== song.lyrics) $('lyrics').value = song.lyrics;
+}
+function renderPreviews() {
+  const wrap = $('previews');
+  wrap.replaceChildren();
+  const song = selectedSong();
+  if (!song) { $('previewTitle').textContent = '画面の見え方'; return; }
+  const slides = splitSlides(song.lyrics);
+  $('previewTitle').textContent = `画面の見え方（全${slides.length}画面）`;
+  const W = window.innerWidth, H = window.innerHeight;
+  const sideBySide = W <= 900;   // 縦向き：高さに合わせて横に並べる
+  const scale = sideBySide ? 150 / H : Math.max(wrap.clientWidth - 10, 180) / W;
+  slides.forEach((lines, i) => {
+    const item = { type: 'slide', songIndex: state.songs.indexOf(song), song, lines, slideIndex: i, slideCount: slides.length };
+    const next = i + 1 < slides.length ? { type: 'slide', lines: slides[i + 1] } : followingItem(song);
+    const box = document.createElement('div');
+    box.className = 'thumb-wrap';
+    box.style.width = (W * scale + 2) + 'px';
+    const stage = document.createElement('div');
+    stage.className = 'stage';
+    paintStage(stage, item, next, W, H, scale, state.songs.length);
+    const cap = document.createElement('div');
+    const L = computeLayout(W, H, Boolean(next));
+    const tooSmall = fitFont(lines, L.lyricW, L.lyricH, Infinity) < Math.min(W, H) * MIN_READABLE_FONT / 100;
+    cap.textContent = `画面 ${i + 1}` + (tooSmall ? '：文字が小さくなります。改行か空行で分けてください' : '');
+    if (tooSmall) cap.style.color = 'var(--accent)';
+    box.append(stage, cap);
+    wrap.append(box);
+  });
+}
+function followingItem(song) {
+  const i = state.songs.indexOf(song);
+  const nextSong = state.songs[i + 1];
+  return nextSong ? { type: 'title', songIndex: i + 1, song: nextSong } : { type: 'end' };
+}
+function renderEditor() {
+  renderSongList();
+  renderSongForm();
+  renderPreviews();
+  const hasSongs = state.songs.length > 0;
+  $('startAll').disabled = !hasSongs;
+  $('startHere').disabled = !hasSongs;
+}
+
+$('title').addEventListener('input', e => {
+  const song = selectedSong();
+  if (!song) return;
+  song.title = e.target.value;
+  renderSongList();
+  saveSoon();
+});
+let previewTimer;
+$('lyrics').addEventListener('input', e => {
+  const song = selectedSong();
+  if (!song) return;
+  song.lyrics = e.target.value;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(renderPreviews, 150);
+  saveSoon();
+});
+$('addSong').addEventListener('click', () => {
+  const song = { id: newId(), title: '', lyrics: '' };
+  state.songs.push(song);
+  state.selectedId = song.id;
+  saveSoon();
+  renderEditor();
+  $('title').focus();
+});
+$('deleteSong').addEventListener('click', () => {
+  const song = selectedSong();
+  if (!song) return;
+  if (!confirm(`「${songName(song)}」を削除します。よろしいですか？`)) return;
+  const i = state.songs.indexOf(song);
+  state.songs.splice(i, 1);
+  const neighbor = state.songs[i] || state.songs[i - 1];
+  state.selectedId = neighbor ? neighbor.id : null;
+  saveSoon();
+  renderEditor();
+});
+
+/* 曲順の並べ替え。iPad は標準のドラッグが効かないので指の動きを直接追う */
+function startDrag(e, li) {
+  e.preventDefault();
+  const list = $('songList');
+  const handle = e.currentTarget;
+  handle.setPointerCapture(e.pointerId);
+  li.classList.add('dragging');
+  const onMove = ev => {
+    const rect = list.getBoundingClientRect();
+    if (ev.clientY < rect.top + 30) list.scrollTop -= 8;
+    else if (ev.clientY > rect.bottom - 30) list.scrollTop += 8;
+    const others = [...list.children].filter(c => c !== li);
+    const before = others.find(c => {
+      const r = c.getBoundingClientRect();
+      return ev.clientY < r.top + r.height / 2;
+    });
+    list.insertBefore(li, before || null);
+  };
+  const onEnd = () => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onEnd);
+    handle.removeEventListener('pointercancel', onEnd);
+    const order = [...list.children].map(c => c.dataset.id);
+    state.songs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    saveSoon();
+    renderEditor();
+  };
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onEnd);
+  handle.addEventListener('pointercancel', onEnd);
+}
+
+/* ---------- ファイルへの保存・読み込み ---------- */
+$('saveFile').addEventListener('click', () => {
+  const d = new Date();
+  const pad2 = n => String(n).padStart(2, '0');
+  const name = `setlist-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(state)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+});
+$('loadFile').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const next = normalizeState(JSON.parse(await file.text()));
+    if (!next) throw new Error('形式が違います');
+    if (!confirm(`今のセットリストを、読み込むファイル（${next.songs.length}曲）に置き換えます。よろしいですか？`)) return;
+    state = next;
+    await saveNow();
+    renderEditor();
+    toast('読み込みました');
+  } catch (err) {
+    console.error(err);
+    toast('このファイルは読み込めませんでした');
+  }
+});
+
+/* ---------- 設定 ---------- */
+function renderSettings() {
+  const s = state.settings, p = s.photo;
+  $('maxFont').value = s.maxFont;
+  $('maxFontVal').textContent = `画面の高さの${s.maxFont}%`;
+  $('showNext').checked = s.showNext;
+  $('photoThumb').hidden = !p.data;
+  if (p.data) $('photoThumb').src = p.data; else $('photoThumb').removeAttribute('src');
+  $('removePhoto').hidden = !p.data;
+  $('pickPhoto').textContent = p.data ? '写真を変える' : '写真を選ぶ';
+  $('photoOptions').hidden = !p.data;
+  $('showPhoto').checked = p.show;
+  $('photoSize').value = p.size;
+  $('photoSizeVal').textContent = `画面の短い辺の${p.size}%`;
+  document.querySelectorAll('#corners button').forEach(b => b.classList.toggle('on', b.dataset.corner === p.corner));
+}
+function settingsChanged() { renderSettings(); renderPreviews(); saveSoon(); }
+
+$('openSettings').addEventListener('click', () => { renderSettings(); $('keyTest').textContent = 'この画面を開いたままペダルを踏むと、届いたキーを表示します。'; $('settings').hidden = false; });
+$('closeSettings').addEventListener('click', () => { $('settings').hidden = true; });
+$('maxFont').addEventListener('input', e => { state.settings.maxFont = Number(e.target.value); settingsChanged(); });
+$('showNext').addEventListener('change', e => { state.settings.showNext = e.target.checked; settingsChanged(); });
+$('showPhoto').addEventListener('change', e => { state.settings.photo.show = e.target.checked; settingsChanged(); });
+$('photoSize').addEventListener('input', e => { state.settings.photo.size = Number(e.target.value); settingsChanged(); });
+document.querySelectorAll('#corners button').forEach(b => b.addEventListener('click', () => {
+  state.settings.photo.corner = b.dataset.corner;
+  settingsChanged();
+}));
+$('pickPhoto').addEventListener('click', () => $('photoInput').click());
+$('removePhoto').addEventListener('click', () => {
+  if (!confirm('写真を外します。よろしいですか？')) return;
+  state.settings.photo.data = null;
+  settingsChanged();
+});
+$('photoInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const { data, ratio } = await shrinkPhoto(file);
+    Object.assign(state.settings.photo, { data, ratio, show: true });
+    settingsChanged();
+  } catch (err) {
+    console.error(err);
+    toast('この写真は読み込めませんでした。別の写真をお試しください。');
+  }
+});
+/* 大きな写真は本番中の動きを重くしないよう縮めて保存する */
+async function shrinkPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const k = Math.min(1, 900 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * k));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return { data: canvas.toDataURL('image/jpeg', 0.85), ratio: canvas.width / canvas.height };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/* ---------- 本番画面 ---------- */
+let deck = [], pos = 0, playing = false, lastPress = 0;
+let wakeLock = null, wakeFailed = false;
+
+async function keepAwake() {
+  if (wakeLock) return;
+  try {
+    if (!('wakeLock' in navigator)) throw new Error('未対応');
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeFailed = false;
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (err) {
+    wakeFailed = true;
+  }
+}
+function paintPlay() {
+  const stage = $('stage');
+  const W = window.innerWidth, H = window.innerHeight;
+  paintStage(stage, deck[pos], deck[pos + 1], W, H, 1, state.songs.length);
+  if (wakeFailed) {
+    const warn = document.createElement('div');
+    warn.className = 'caption';
+    warn.style.cssText = `left:50%;transform:translateX(-50%);top:${H * 0.07}px;font-size:13px;color:#e5645a`;
+    warn.textContent = '画面スリープ防止が効いていません';
+    stage.append(warn);
+  }
+}
+async function startPlay(songIndex) {
+  await saveNow();
+  deck = buildDeck(state.songs);
+  pos = Math.max(0, deck.findIndex(it => it.type === 'title' && it.songIndex === songIndex));
+  playing = true;
+  $('toast').hidden = true;
+  document.activeElement && document.activeElement.blur();
+  $('play').hidden = false;
+  disarmExit();
+  await keepAwake();
+  paintPlay();
+}
+function stopPlay() {
+  playing = false;
+  $('play').hidden = true;
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+function step(delta) {
+  const to = pos + delta;
+  if (to < 0 || to >= deck.length) return;
+  pos = to;
+  paintPlay();
+  if (!wakeLock) keepAwake();
+}
+function pedal(delta) {
+  const now = performance.now();
+  if (now - lastPress < PEDAL_GUARD_MS) return;
+  lastPress = now;
+  step(delta);
+}
+
+document.addEventListener('keydown', e => {
+  if (!$('settings').hidden) {
+    $('keyTest').textContent = NEXT_KEYS.has(e.key) ? `「${e.key}」が届きました → 次へ進むキーです`
+      : PREV_KEYS.has(e.key) ? `「${e.key}」が届きました → 前へ戻るキーです`
+      : `「${e.key}」が届きました → このキーは未対応です`;
+    if (e.target === document.body || e.target.tagName === 'BUTTON') e.preventDefault();
+    return;
+  }
+  if (!playing) return;
+  if (e.key === 'Escape') { stopPlay(); return; }
+  const isNext = NEXT_KEYS.has(e.key), isPrev = PREV_KEYS.has(e.key);
+  if (!isNext && !isPrev) return;
+  e.preventDefault();
+  if (e.repeat) return;   // 踏みっぱなしで飛ばないように
+  pedal(isNext ? 1 : -1);
+});
+
+/* ペダルの予備として、画面の右側タップで次へ、左側タップで前へ */
+$('play').addEventListener('pointerup', e => {
+  if (e.target === $('exit')) return;
+  pedal(e.clientX >= window.innerWidth / 2 ? 1 : -1);
+});
+/* 本番中の誤操作を防ぐため、終了は2回タップ */
+let exitTimer;
+function disarmExit() {
+  clearTimeout(exitTimer);
+  $('exit').classList.remove('armed');
+  $('exit').textContent = '終了';
+}
+$('exit').addEventListener('click', () => {
+  if ($('exit').classList.contains('armed')) { disarmExit(); stopPlay(); return; }
+  $('exit').classList.add('armed');
+  $('exit').textContent = 'もう一度タップで終了';
+  exitTimer = setTimeout(disarmExit, 2500);
+});
+
+$('startAll').addEventListener('click', () => startPlay(0));
+$('startHere').addEventListener('click', () => startPlay(state.songs.indexOf(selectedSong())));
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (playing) keepAwake().then(paintPlay);
+  } else {
+    if (saveTimer) saveNow();
+  }
+});
+let resizeTimer;
+window.addEventListener('resize', () => {
+  if (playing) paintPlay();
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderPreviews, 150);
+});
+
+/* ---------- その他 ---------- */
+let toastTimer;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+}
+
+(async function init() {
+  try {
+    const saved = normalizeState(await dbGet());
+    if (saved) state = saved;
+  } catch (err) {
+    console.error(err);
+    toast('保存データを読み出せませんでした');
+  }
+  renderEditor();
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
+})();
+</script>
+</body>
+</html>
