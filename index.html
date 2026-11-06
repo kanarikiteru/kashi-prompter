@@ -65,12 +65,12 @@
   .thumb-wrap .stage { border: 1px solid var(--line); border-radius: 4px; }
 
   /* 舞台の中身（大きさは JS で指定） */
-  .lyric-box { position: absolute; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; font-weight: 700; line-height: 1.25; text-align: center; }
+  .lyric-box { position: absolute; display: flex; flex-direction: column; align-items: flex-start;
+    justify-content: center; font-weight: 700; line-height: 1.25; text-align: left; }
   .lyric-box > div { white-space: nowrap; }
   .caption { position: absolute; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .status { color: #8c93a1; }
-  .next { color: #9fb0a6; text-align: center; }
+  .next { color: #9fb0a6; text-align: left; }
   .label { color: var(--accent); font-weight: 600; margin-bottom: .3em; }
   .photo { position: absolute; object-fit: cover; }
 
@@ -145,9 +145,9 @@
 <div id="settings" hidden>
   <div>
     <h2>設定</h2>
-    <label class="field"><span>歌詞の最大の大きさ：<b id="maxFontVal"></b></span>
-      <input id="maxFont" type="range" min="8" max="60" step="1"></label>
-    <p class="hint">長い行は、1行に収まるよう自動で小さくなります。遠くて読みにくい会場では大きくしてください。</p>
+    <label class="field"><span>文字の大きさ：<b id="fontSizeVal"></b></span>
+      <input id="fontSize" type="range" min="5" max="30" step="1"></label>
+    <p class="hint">全曲・全画面が同じ大きさになります。長い行は同じ大きさのまま折り返します。</p>
     <label class="check"><input id="showNext" type="checkbox">次の行を画面の下に表示する</label>
 
     <h3>写真</h3>
@@ -191,7 +191,6 @@ const $ = id => document.getElementById(id);
 /* ---------- 定数 ---------- */
 const FONT = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif';
 const LINE_HEIGHT = 1.25;
-const MIN_READABLE_FONT = 7;  // 画面の短い辺に対する%。これより小さくなる行は編集画面で注意を出す
 const NEXT_KEYS = new Set(['PageDown', 'ArrowDown', 'ArrowRight', ' ', 'Spacebar', 'Enter']);
 const PREV_KEYS = new Set(['PageUp', 'ArrowUp', 'ArrowLeft']);
 const PEDAL_GUARD_MS = 150;   // 接点のバタつきで2回送られるのを防ぐ
@@ -209,7 +208,7 @@ const defaultState = () => {
     songs: [song],
     selectedId: song.id,
     settings: {
-      maxFont: 26,
+      fontSize: 11,
       showNext: true,
       photo: { data: null, ratio: 1, show: true, corner: 'bottom-right', size: 22 },
     },
@@ -283,7 +282,7 @@ function normalizeState(raw) {
     songs,
     selectedId: songs.some(s => s.id === raw.selectedId) ? raw.selectedId : (songs[0] ? songs[0].id : null),
     settings: {
-      maxFont: clampNum(rs.maxFont, 8, 60, base.settings.maxFont),
+      fontSize: clampNum(rs.fontSize, 5, 30, base.settings.fontSize),
       showNext: rs.showNext !== false,
       photo: {
         data: photoOk ? rp.data : null,
@@ -325,10 +324,37 @@ function nextText(item, total) {
 const measureCtx = document.createElement('canvas').getContext('2d');
 measureCtx.font = `700 100px ${FONT}`;
 function widthPer1px(line) { return measureCtx.measureText(line).width / 100; }
-function fitFont(lines, boxW, boxH, maxPx) {
-  const widest = Math.max(...lines.map(widthPer1px), 0.01);
-  const size = Math.min(boxW * 0.98 / widest, boxH / (lines.length * LINE_HEIGHT), maxPx);
-  return Math.max(size, 1);
+const NO_LINE_START = /^[、。，．,.!?！？）」』】〉》ー々ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ]/;
+/* 長い行を、指定の幅に収まるよう分ける。なるべく空白や句読点の後ろで区切る */
+function wrapLine(line, limit) {
+  const result = [];
+  let rest = Array.from(line);
+  while (widthPer1px(rest.join('')) > limit && rest.length > 1) {
+    let n = 1;
+    while (n < rest.length && widthPer1px(rest.slice(0, n + 1).join('')) <= limit) n++;
+    let cut = n;
+    for (let i = n; i > n / 2; i--) {
+      if (/[\s　、。，,]/.test(rest[i - 1])) { cut = i; break; }
+    }
+    if (cut === n && n > 1 && n < rest.length && NO_LINE_START.test(rest[n])) cut = n - 1;
+    const head = rest.slice(0, cut).join('').trim();
+    if (head) result.push(head);
+    rest = rest.slice(cut);
+    while (rest.length && /\s/.test(rest[0])) rest.shift();
+  }
+  if (rest.length) result.push(rest.join(''));
+  return result;
+}
+/* 指定の大きさで折り返す。縦に入りきらないときだけ、その画面を小さくする */
+function arrangeLines(lines, boxW, boxH, size) {
+  const wrapAt = s => lines.flatMap(l => wrapLine(l, boxW * 0.98 / s));
+  let current = size;
+  let wrapped = wrapAt(current);
+  while (wrapped.length * current * LINE_HEIGHT > boxH && current > 1) {
+    current *= 0.95;
+    wrapped = wrapAt(current);
+  }
+  return { lines: wrapped, size: current, shrunk: current < size, wrapped: wrapped.length > lines.length };
 }
 
 /* 画面の配置。写真の帯を歌詞の領域から外して、歌詞に重ならないようにする */
@@ -360,12 +386,12 @@ function paintStage(el, item, next, W, H, scale, songTotal) {
   const box = document.createElement('div');
   box.className = 'lyric-box';
   Object.assign(box.style, { left: px(L.pad), top: px(L.topBand), width: px(L.lyricW), height: px(L.lyricH) });
-  const maxPx = H * state.settings.maxFont / 100;
+  const lyricPx = H * state.settings.fontSize / 100;
 
   if (item.type === 'slide') {
-    const size = fitFont(item.lines, L.lyricW, L.lyricH, maxPx);
-    box.style.fontSize = px(size);
-    item.lines.forEach(line => {
+    const fit = arrangeLines(item.lines, L.lyricW, L.lyricH, lyricPx);
+    box.style.fontSize = px(fit.size);
+    fit.lines.forEach(line => {
       const d = document.createElement('div');
       d.textContent = line;
       box.append(d);
@@ -373,19 +399,22 @@ function paintStage(el, item, next, W, H, scale, songTotal) {
   } else {
     const main = item.type === 'title' ? songName(item.song) : 'セットリスト終了';
     const labelText = item.type === 'title' ? `${item.songIndex + 1}曲目 / 全${songTotal}曲` : '';
-    const available = labelText ? L.lyricH * 0.7 : L.lyricH;
-    const size = fitFont([main], L.lyricW, available, Math.min(maxPx, H * 0.2));
+    const labelPx = H * 0.05;
+    const available = L.lyricH - (labelText ? labelPx * 1.6 : 0);
+    const fit = arrangeLines([main], L.lyricW, available, lyricPx);
     if (labelText) {
       const lab = document.createElement('div');
       lab.className = 'label';
-      lab.style.fontSize = px(Math.min(H * 0.05, size * 0.7));
+      lab.style.fontSize = px(labelPx);
       lab.textContent = labelText;
       box.append(lab);
     }
-    const d = document.createElement('div');
-    d.style.fontSize = px(size);
-    d.textContent = main;
-    box.append(d);
+    fit.lines.forEach(line => {
+      const d = document.createElement('div');
+      d.style.fontSize = px(fit.size);
+      d.textContent = line;
+      box.append(d);
+    });
   }
   el.append(box);
 
@@ -411,9 +440,8 @@ function paintStage(el, item, next, W, H, scale, songTotal) {
 
   if (L.nextH) {
     const g = sideGap(false);
-    const availW = W - g.left - g.right;
     const text = nextText(next, songTotal);
-    const size = fitFont([text], availW, L.nextH * 0.8, H * 0.07);
+    const size = H * 0.055;   // 次の行も大きさを固定（長いときは末尾を「…」で省略）
     const n = document.createElement('div');
     n.className = 'caption next';
     Object.assign(n.style, { left: px(g.left), right: px(g.right), bottom: px((L.nextH - size * 1.25) / 2),
@@ -483,9 +511,10 @@ function renderPreviews() {
     paintStage(stage, item, next, W, H, scale, state.songs.length);
     const cap = document.createElement('div');
     const L = computeLayout(W, H, Boolean(next));
-    const tooSmall = fitFont(lines, L.lyricW, L.lyricH, Infinity) < Math.min(W, H) * MIN_READABLE_FONT / 100;
-    cap.textContent = `画面 ${i + 1}` + (tooSmall ? '：文字が小さくなります。改行か空行で分けてください' : '');
-    if (tooSmall) cap.style.color = 'var(--accent)';
+    const fit = arrangeLines(lines, L.lyricW, L.lyricH, H * state.settings.fontSize / 100);
+    cap.textContent = `画面 ${i + 1}` + (fit.shrunk ? '：入りきらないので、この画面だけ小さくなります。空行で分けてください'
+      : fit.wrapped ? '（長い行を折り返しています）' : '');
+    if (fit.shrunk) cap.style.color = 'var(--accent)';
     box.append(stage, cap);
     wrap.append(box);
   });
@@ -608,8 +637,9 @@ $('fileInput').addEventListener('change', async e => {
 /* ---------- 設定 ---------- */
 function renderSettings() {
   const s = state.settings, p = s.photo;
-  $('maxFont').value = s.maxFont;
-  $('maxFontVal').textContent = `画面の高さの${s.maxFont}%`;
+  $('fontSize').value = s.fontSize;
+  const perLine = Math.floor(computeLayout(window.innerWidth, window.innerHeight, true).lyricW / (window.innerHeight * s.fontSize / 100));
+  $('fontSizeVal').textContent = `1行に全角 約${perLine}文字`;
   $('showNext').checked = s.showNext;
   $('photoThumb').hidden = !p.data;
   if (p.data) $('photoThumb').src = p.data; else $('photoThumb').removeAttribute('src');
@@ -625,7 +655,7 @@ function settingsChanged() { renderSettings(); renderPreviews(); saveSoon(); }
 
 $('openSettings').addEventListener('click', () => { renderSettings(); $('keyTest').textContent = 'この画面を開いたままペダルを踏むと、届いたキーを表示します。'; $('settings').hidden = false; });
 $('closeSettings').addEventListener('click', () => { $('settings').hidden = true; });
-$('maxFont').addEventListener('input', e => { state.settings.maxFont = Number(e.target.value); settingsChanged(); });
+$('fontSize').addEventListener('input', e => { state.settings.fontSize = Number(e.target.value); settingsChanged(); });
 $('showNext').addEventListener('change', e => { state.settings.showNext = e.target.checked; settingsChanged(); });
 $('showPhoto').addEventListener('change', e => { state.settings.photo.show = e.target.checked; settingsChanged(); });
 $('photoSize').addEventListener('input', e => { state.settings.photo.size = Number(e.target.value); settingsChanged(); });
